@@ -18,6 +18,8 @@ def make_spotify_blueprint(
     session_class=None,
     storage=None,
     rule_kwargs=None,
+    use_pkce=False,
+    code_challenge_method="S256",
 ):
     """
     Make a blueprint for authenticating with Spotify using OAuth 2. This requires
@@ -47,6 +49,10 @@ def make_spotify_blueprint(
                 :class:`~flask_dance.consumer.storage.session.SessionStorage`.
         rule_kwargs (dict, optional): Additional arguments that should be passed when adding
             the login and authorized routes. Defaults to ``None``.
+        use_pkce (bool): Whether to use PKCE for the authorization code flow.
+            Defaults to False.
+        code_challenge_method (str): The PKCE code challenge method, either
+            ``"S256"`` or ``"plain"``. Defaults to ``"S256"``.
 
     :rtype: :class:`~flask_dance.consumer.OAuth2ConsumerBlueprint`
     :returns: A :doc:`blueprint <flask:blueprints>` to attach to your Flask app.
@@ -60,6 +66,7 @@ def make_spotify_blueprint(
         base_url="https://api.spotify.com",
         authorization_url="https://accounts.spotify.com/authorize",
         token_url="https://accounts.spotify.com/api/token",
+        auto_refresh_url="https://accounts.spotify.com/api/token",
         redirect_url=redirect_url,
         redirect_to=redirect_to,
         login_url=login_url,
@@ -67,6 +74,8 @@ def make_spotify_blueprint(
         session_class=session_class,
         storage=storage,
         rule_kwargs=rule_kwargs,
+        use_pkce=use_pkce,
+        code_challenge_method=code_challenge_method,
     )
     spotify_bp.from_config["client_id"] = "SPOTIFY_OAUTH_CLIENT_ID"
     spotify_bp.from_config["client_secret"] = "SPOTIFY_OAUTH_CLIENT_SECRET"

@@ -22,6 +22,8 @@ def make_google_blueprint(
     storage=None,
     hosted_domain=None,
     rule_kwargs=None,
+    use_pkce=False,
+    code_challenge_method="S256",
 ):
     """
     Make a blueprint for authenticating with Google using OAuth 2. This requires
@@ -63,6 +65,10 @@ def make_google_blueprint(
             response validation (see warning).
         rule_kwargs (dict, optional): Additional arguments that should be passed when adding
             the login and authorized routes. Defaults to ``None``.
+        use_pkce (bool): Whether to use PKCE for the authorization code flow.
+            Defaults to False.
+        code_challenge_method (str): The PKCE code challenge method, either
+            ``"S256"`` or ``"plain"``. Defaults to ``"S256"``.
 
     .. _google_hosted_domain_warning:
     .. warning::
@@ -107,6 +113,8 @@ def make_google_blueprint(
         session_class=session_class,
         storage=storage,
         rule_kwargs=rule_kwargs,
+        use_pkce=use_pkce,
+        code_challenge_method=code_challenge_method,
     )
     google_bp.from_config["client_id"] = "GOOGLE_OAUTH_CLIENT_ID"
     google_bp.from_config["client_secret"] = "GOOGLE_OAUTH_CLIENT_SECRET"

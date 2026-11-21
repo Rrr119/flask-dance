@@ -229,6 +229,54 @@ def test_sqla_storage(app, db, blueprint, request):
     }
 
 
+def test_sqla_storage_persists_refreshed_token(app, db, blueprint, request):
+    class OAuth(OAuthConsumerMixin, db.Model):
+        pass
+
+    db.create_all()
+
+    def done():
+        db.session.remove()
+        db.drop_all()
+
+    request.addfinalizer(done)
+
+    storage = SQLAlchemyStorage(OAuth, db.session)
+    blueprint.storage = storage
+    blueprint.auto_refresh_url = blueprint.token_url
+    storage.set(
+        blueprint,
+        {
+            "access_token": "old-token",
+            "refresh_token": "old-refresh-token",
+            "token_type": "bearer",
+            "expires_at": 1,
+        },
+    )
+
+    responses.reset()
+    responses.add(
+        responses.POST,
+        "https://example.com/oauth/access_token",
+        json={
+            "access_token": "new-token",
+            "refresh_token": "new-refresh-token",
+            "token_type": "bearer",
+            "expires_in": 3600,
+        },
+    )
+    responses.add(responses.GET, "https://example.com/profile", json={"ok": True})
+
+    with app.test_request_context("/"):
+        response = blueprint.session.get("/profile")
+
+    assert response.status_code == 200
+    oauth = OAuth.query.one()
+    assert oauth.token["access_token"] == "new-token"
+    assert oauth.token["refresh_token"] == "new-refresh-token"
+    assert oauth.token["expires_at"] > 1
+
+
 def test_sqla_load_token_for_user(app, db, blueprint, request):
     class User(db.Model):
         id = db.Column(db.Integer, primary_key=True)

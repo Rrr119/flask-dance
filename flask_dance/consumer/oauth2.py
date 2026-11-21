@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import logging
 
@@ -5,6 +7,7 @@ import flask
 from flask import current_app, redirect, request, url_for
 from oauthlib.common import generate_token
 from oauthlib.oauth2 import MissingCodeError
+from requests.auth import HTTPBasicAuth
 from werkzeug.utils import cached_property
 from werkzeug.wrappers import Response
 
@@ -17,6 +20,18 @@ from .base import (
 from .requests import OAuth2Session
 
 log = logging.getLogger(__name__)
+
+
+def _create_code_challenge(code_verifier, code_challenge_method):
+    if code_challenge_method == "plain":
+        return code_verifier
+    if code_challenge_method == "S256":
+        digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+        return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    raise ValueError(
+        "code_challenge_method must be either 'S256' or 'plain', "
+        f"not {code_challenge_method!r}"
+    )
 
 
 class OAuth2ConsumerBlueprint(BaseOAuthConsumerBlueprint):
@@ -162,6 +177,11 @@ class OAuth2ConsumerBlueprint(BaseOAuthConsumerBlueprint):
         self.redirect_to = redirect_to
         self.code_challenge_method = code_challenge_method
         self.use_pkce = use_pkce
+        if self.use_pkce and self.code_challenge_method not in ("S256", "plain"):
+            raise ValueError(
+                "code_challenge_method must be either 'S256' or 'plain', "
+                f"not {self.code_challenge_method!r}"
+            )
 
         self.teardown_app_request(self.teardown_session)
 
@@ -213,13 +233,14 @@ class OAuth2ConsumerBlueprint(BaseOAuthConsumerBlueprint):
     def login(self):
         log.debug("client_id = %s", self.client_id)
         self.session.redirect_uri = url_for(".authorized", _external=True)
+        authorization_url_params = dict(self.authorization_url_params)
         if self.use_pkce:
             code_verifier = generate_token(length=48)
-            code_challenge = self.session._client.create_code_challenge(
+            code_challenge = _create_code_challenge(
                 code_verifier=code_verifier,
                 code_challenge_method=self.code_challenge_method,
             )
-            self.authorization_url_params.update(
+            authorization_url_params.update(
                 {
                     "code_challenge_method": self.code_challenge_method,
                     "code_challenge": code_challenge,
@@ -227,10 +248,9 @@ class OAuth2ConsumerBlueprint(BaseOAuthConsumerBlueprint):
             )
             code_verifier_key = f"{self.name}_oauth_code_verifier"
             flask.session[code_verifier_key] = code_verifier
-            log.debug("code_verifier = %s", code_verifier)
 
         url, state = self.session.authorization_url(
-            self.authorization_url, state=self.state, **self.authorization_url_params
+            self.authorization_url, state=self.state, **authorization_url_params
         )
         state_key = f"{self.name}_oauth_state"
         flask.session[state_key] = state
@@ -284,6 +304,7 @@ class OAuth2ConsumerBlueprint(BaseOAuthConsumerBlueprint):
         self.session._state = state
         del flask.session[state_key]
 
+        token_url_params = dict(self.token_url_params)
         if self.use_pkce:
             code_verifier_key = f"{self.name}_oauth_code_verifier"
             if code_verifier_key not in flask.session:
@@ -291,21 +312,23 @@ class OAuth2ConsumerBlueprint(BaseOAuthConsumerBlueprint):
                 log.info("code_verifier not found, redirecting user to login")
                 return redirect(url_for(".login"))
 
-            code_verifier = flask.session[code_verifier_key]
-            log.debug("code_verifier = %s", code_verifier)
-            del flask.session[code_verifier_key]
-            self.token_url_params["code_verifier"] = code_verifier
+            token_url_params["code_verifier"] = flask.session.pop(code_verifier_key)
 
         self.session.redirect_uri = url_for(".authorized", _external=True)
 
         log.debug("client_id = %s", self.client_id)
         log.debug("client_secret = %s", self.client_secret)
+        fetch_token_kwargs = {}
+        if self.client_secret is not None:
+            fetch_token_kwargs["client_secret"] = self.client_secret
+        else:
+            token_url_params.setdefault("include_client_id", True)
         try:
             token = self.session.fetch_token(
                 self.token_url,
                 authorization_response=request.url,
-                client_secret=self.client_secret,
-                **self.token_url_params,
+                **fetch_token_kwargs,
+                **token_url_params,
             )
         except MissingCodeError as e:
             e.args = (
@@ -331,3 +354,28 @@ class OAuth2ConsumerBlueprint(BaseOAuthConsumerBlueprint):
                 log.warning("OAuth 2 authorization error: %s", str(error))
                 oauth_error.send(self, error=error)
         return redirect(next_url)
+
+    def refresh_token(self, token_url=None, **kwargs):
+        """
+        Refresh the current OAuth token and persist the result in the
+        blueprint's token storage.
+
+        Args:
+            token_url: The provider's token endpoint. Defaults to
+                ``auto_refresh_url``, then ``token_url``.
+            **kwargs: Extra arguments passed to
+                :meth:`requests_oauthlib.OAuth2Session.refresh_token`.
+        """
+        token_url = token_url or self.auto_refresh_url or self.token_url
+        if not token_url:
+            raise ValueError("No token endpoint set for token refresh.")
+
+        if "auth" not in kwargs:
+            if self.client_secret is not None:
+                kwargs["auth"] = HTTPBasicAuth(self.client_id, self.client_secret)
+            elif "client_id" not in kwargs:
+                kwargs["client_id"] = self.client_id
+
+        token = self.session.refresh_token(token_url, **kwargs)
+        self.token = token
+        return self.token

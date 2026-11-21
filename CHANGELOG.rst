@@ -3,6 +3,15 @@ Changelog
 
 `unreleased`_
 -------------
+* Improve PKCE support: validate ``code_challenge_method``, support both
+  ``S256`` and ``plain`` correctly, keep per-login PKCE parameters out of the
+  shared blueprint configuration, and support public clients without a
+  ``client_secret``.
+* Add ``OAuth2ConsumerBlueprint.refresh_token()`` for explicit token refresh.
+  Automatic and explicit refreshes both persist the new token through the
+  configured storage.
+* Add PKCE options to the Google, Azure, and Spotify contrib blueprints, and
+  enable automatic refresh for Spotify.
 * When using the Discord configuration with ``prompt`` set to ``None``,
   pass the string `"none"` in the URL, to follow the Discord developer documentation.
 

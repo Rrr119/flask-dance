@@ -96,6 +96,38 @@ By default, the state is a random 30-character string, as provided by
 kind of CSRF attack. For more information, see `section 10.12 of the
 OAuth 2 spec <https://tools.ietf.org/html/rfc6749#section-10.12>`_.
 
+PKCE
+~~~~
+
+Set ``use_pkce=True`` on an :class:`~OAuth2ConsumerBlueprint` (or on a
+supported contrib blueprint factory) to enable Proof Key for Code Exchange.
+Flask-Dance generates a fresh code verifier for every login, stores it in the
+Flask session, and sends the verifier when exchanging the authorization code.
+The default ``S256`` challenge method is recommended; ``plain`` is available
+for providers that cannot support ``S256``.
+
+PKCE is useful for public clients, where no client secret is available. When
+``client_secret`` is omitted, Flask-Dance sends the ``client_id`` in the token
+request instead of constructing HTTP Basic authentication with an empty secret.
+
+Token Refresh
+-------------
+
+If the provider returns a ``refresh_token`` and the blueprint has an
+``auto_refresh_url``, Flask-Dance automatically refreshes expired access
+tokens before making an API request. The refreshed token is written back
+through the configured token storage, so session, SQLAlchemy, and custom
+storages all receive the updated access token, refresh token, and expiration.
+
+You can also refresh explicitly from inside a request context:
+
+.. code-block:: python
+
+    token = blueprint.refresh_token()
+
+The method uses ``auto_refresh_url`` when configured, falling back to the
+blueprint's ``token_url``, and persists the result in the token storage.
+
 Finishing the Dance
 -------------------
 

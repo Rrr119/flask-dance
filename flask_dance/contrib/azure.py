@@ -22,6 +22,8 @@ def make_azure_blueprint(
     domain_hint=None,
     login_hint=None,
     rule_kwargs=None,
+    use_pkce=False,
+    code_challenge_method="S256",
 ):
     """
     Make a blueprint for authenticating with Azure AD using OAuth 2. This requires
@@ -74,6 +76,10 @@ def make_azure_blueprint(
             Defaults to ``None``
         rule_kwargs (dict, optional): Additional arguments that should be passed when adding
             the login and authorized routes. Defaults to ``None``.
+        use_pkce (bool): Whether to use PKCE for the authorization code flow.
+            Defaults to False.
+        code_challenge_method (str): The PKCE code challenge method, either
+            ``"S256"`` or ``"plain"``. Defaults to ``"S256"``.
 
     :rtype: :class:`~flask_dance.consumer.OAuth2ConsumerBlueprint`
     :returns: A :doc:`blueprint <flask:blueprints>` to attach to your Flask app.
@@ -108,6 +114,8 @@ def make_azure_blueprint(
         session_class=session_class,
         storage=storage,
         rule_kwargs=rule_kwargs,
+        use_pkce=use_pkce,
+        code_challenge_method=code_challenge_method,
     )
     azure_bp.from_config["client_id"] = "AZURE_OAUTH_CLIENT_ID"
     azure_bp.from_config["client_secret"] = "AZURE_OAUTH_CLIENT_SECRET"

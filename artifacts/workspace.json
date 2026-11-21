@@ -1,0 +1,17 @@
+{
+  "root": "/home/dev/feedback/uid32230",
+  "B": "/home/dev/feedback/uid32230",
+  "sha": "ee24cb47445e376f42c6861bb09dbcc58aadc6c1",
+  "wslDistro": "Ubuntu-26.04",
+  "source": {
+    "owner": "singingwolfboy",
+    "repo": "flask-dance",
+    "sha": "ee24cb47445e376f42c6861bb09dbcc58aadc6c1"
+  },
+  "fork": {
+    "owner": "Rrr119",
+    "repo": "flask-dance",
+    "cloneUrl": "https://github.com/Rrr119/flask-dance.git"
+  },
+  "at": "2026-11-21T23:00:26.765Z"
+}

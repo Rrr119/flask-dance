@@ -57,6 +57,8 @@ of the user.
 
    .. automethod:: __init__
 
+   .. automethod:: refresh_token
+
    .. attribute:: session
 
       An :class:`~requests_oauthlib.OAuth2Session` instance that

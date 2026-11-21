@@ -198,3 +198,14 @@ class OAuth2Session(BaseOAuth2Session):
             client_secret=self.blueprint.client_secret,
             **kwargs,
         )
+
+    def refresh_token(self, token_url, refresh_token=None, auth=None, **kwargs):
+        if (
+            auth is None
+            and self.blueprint is not None
+            and self.blueprint.client_secret is None
+        ):
+            kwargs.setdefault("client_id", self.blueprint.client_id)
+        return super().refresh_token(
+            token_url, refresh_token=refresh_token, auth=auth, **kwargs
+        )

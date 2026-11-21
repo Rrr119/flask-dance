@@ -28,12 +28,18 @@ except ImportError:
 requires_blinker = pytest.mark.skipif(not blinker, reason="requires blinker")
 
 
-def make_app(login_url=None, debug=False, **kwargs):
+def make_app(
+    login_url=None,
+    debug=False,
+    client_id="client_id",
+    client_secret="client_secret",
+    **kwargs,
+):
     blueprint = OAuth2ConsumerBlueprint(
         "test-service",
         __name__,
-        client_id="client_id",
-        client_secret="client_secret",
+        client_id=client_id,
+        client_secret=client_secret,
         scope="admin",
         state="random-string",
         base_url="https://example.com",
@@ -118,20 +124,25 @@ def test_login_url_with_pkce():
 
 
 @responses.activate
-def test_login_url_with_invalid_code_challenge_method():
-    app, _ = make_app(use_pkce=True, code_challenge_method="MD5")
+def test_login_url_with_pkce_plain():
+    app, bp = make_app(use_pkce=True, code_challenge_method="plain")
     with app.test_client() as client:
         resp = client.get(
             "/login/test-service", base_url="https://a.b.c", follow_redirects=False
         )
-        # the code verifier is saved in the session ...
-        assert "test-service_oauth_code_verifier" in flask.session
+        code_verifier = flask.session["test-service_oauth_code_verifier"]
 
     location = URLObject(resp.headers["Location"])
-    assert location.without_query() == "https://example.com/oauth/authorize"
-    # ... but because the "code challenge method" was invalid it was not added to the query parameters
-    assert "code_challenge_method" not in location.query_dict
-    assert "code_challenge" not in location.query_dict
+    assert location.query_dict["code_challenge_method"] == "plain"
+    assert location.query_dict["code_challenge"] == code_verifier
+    # Per-login PKCE values must not leak into the blueprint configuration.
+    assert "code_challenge" not in bp.authorization_url_params
+    assert "code_challenge_method" not in bp.authorization_url_params
+
+
+def test_login_url_with_invalid_code_challenge_method():
+    with pytest.raises(ValueError):
+        make_app(use_pkce=True, code_challenge_method="MD5")
 
 
 @responses.activate
@@ -334,6 +345,34 @@ def test_authorized_url_with_pkce():
         }
 
 
+@responses.activate
+def test_authorized_url_with_pkce_public_client():
+    responses.add(
+        responses.POST,
+        "https://example.com/oauth/access_token",
+        body='{"access_token":"foobar","token_type":"bearer"}',
+    )
+    app, bp = make_app(use_pkce=True, client_secret=None)
+    code_verifier = "public-client-code-verifier"
+
+    with app.test_client() as client:
+        with client.session_transaction() as sess:
+            sess["test-service_oauth_state"] = "random-string"
+            sess["test-service_oauth_code_verifier"] = code_verifier
+        resp = client.get(
+            "/login/test-service/authorized?code=secret-code&state=random-string",
+            base_url="https://a.b.c",
+        )
+
+    assert resp.status_code == 302
+    request_data = dict(parse_qsl(responses.calls[0].request.body))
+    assert request_data["client_id"] == "client_id"
+    assert request_data["code_verifier"] == code_verifier
+    assert "client_secret" not in request_data
+    assert "Authorization" not in responses.calls[0].request.headers
+    assert "code_verifier" not in bp.token_url_params
+
+
 def test_authorized_url_pkce_flow_no_code_verifier():
     app, _ = make_app(use_pkce=True)
     with app.test_client() as client:
@@ -352,6 +391,115 @@ def test_authorized_url_pkce_flow_no_code_verifier():
         )
         # check that there's nothing in the session
         assert "test-service_oauth_token" not in flask.session
+
+
+@responses.activate
+def test_auto_refresh_persists_token_to_storage():
+    storage = MemoryStorage(
+        {
+            "access_token": "old-token",
+            "refresh_token": "old-refresh-token",
+            "token_type": "bearer",
+            "expires_at": 1,
+        }
+    )
+    responses.add(
+        responses.POST,
+        "https://example.com/oauth/access_token",
+        json={
+            "access_token": "new-token",
+            "refresh_token": "new-refresh-token",
+            "token_type": "bearer",
+            "expires_in": 3600,
+        },
+    )
+    responses.add(responses.GET, "https://example.com/profile", json={"ok": True})
+    app, bp = make_app(
+        auto_refresh_url="https://example.com/oauth/access_token",
+        storage=storage,
+    )
+
+    with app.test_request_context("/"):
+        response = bp.session.get("/profile")
+
+    assert response.status_code == 200
+    refresh_request = responses.calls[0].request
+    refresh_data = dict(parse_qsl(refresh_request.body))
+    assert refresh_data["grant_type"] == "refresh_token"
+    assert refresh_data["refresh_token"] == "old-refresh-token"
+    assert refresh_request.headers["Authorization"].startswith("Basic ")
+    assert responses.calls[1].request.headers["Authorization"] == "Bearer new-token"
+    assert storage.token["access_token"] == "new-token"
+    assert storage.token["refresh_token"] == "new-refresh-token"
+    assert storage.token["expires_at"] > 1
+
+
+@responses.activate
+def test_auto_refresh_public_client_sends_client_id():
+    storage = MemoryStorage(
+        {
+            "access_token": "old-token",
+            "refresh_token": "old-refresh-token",
+            "token_type": "bearer",
+            "expires_at": 1,
+        }
+    )
+    responses.add(
+        responses.POST,
+        "https://example.com/oauth/access_token",
+        json={
+            "access_token": "new-token",
+            "token_type": "bearer",
+            "expires_in": 3600,
+        },
+    )
+    responses.add(responses.GET, "https://example.com/profile", json={"ok": True})
+    app, bp = make_app(
+        auto_refresh_url="https://example.com/oauth/access_token",
+        client_secret=None,
+        storage=storage,
+    )
+
+    with app.test_request_context("/"):
+        bp.session.get("/profile")
+
+    refresh_request = responses.calls[0].request
+    refresh_data = dict(parse_qsl(refresh_request.body))
+    assert refresh_data["client_id"] == "client_id"
+    assert "Authorization" not in refresh_request.headers
+    assert storage.token["access_token"] == "new-token"
+
+
+@responses.activate
+def test_refresh_token_method_persists_token_to_storage():
+    storage = MemoryStorage(
+        {
+            "access_token": "old-token",
+            "refresh_token": "old-refresh-token",
+            "token_type": "bearer",
+        }
+    )
+    responses.add(
+        responses.POST,
+        "https://example.com/oauth/access_token",
+        json={
+            "access_token": "new-token",
+            "refresh_token": "new-refresh-token",
+            "token_type": "bearer",
+            "expires_in": 3600,
+        },
+    )
+    app, bp = make_app(storage=storage)
+
+    with app.test_request_context("/"):
+        token = bp.refresh_token()
+        assert bp.token == token
+        assert bp.session.token == token
+
+    assert token["access_token"] == "new-token"
+    assert storage.token["access_token"] == "new-token"
+    assert storage.token["refresh_token"] == "new-refresh-token"
+    assert storage.token["expires_at"] > 1
 
 
 def test_return_expired_token(request):
